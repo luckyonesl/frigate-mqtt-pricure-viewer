@@ -47,8 +47,8 @@ logger.setLevel(_log_level)
 app = Flask(__name__)
 
 # Shared state for last image
-_last_image = None  # bytes of JPEG
-_last_image_ts = 0.0  # epoch seconds
+# Store latest image for each (cam, object): {(cam, object): (image_bytes, timestamp)}
+_latest_images = {}
 _lock = threading.RLock()
 
 # SSE: list of queues for connected clients
@@ -56,21 +56,37 @@ _sse_clients = []
 _sse_clients_lock = threading.Lock()
 
 
-def store_image_if_jpeg(candidate_bytes: bytes) -> bool:
+def store_image_for_topic(candidate_bytes: bytes, cam: str, obj: str) -> bool:
     """
-    If candidate_bytes contains a jpeg (raw or base64-encoded), store it and return True.
-    Otherwise return False.
+    Store the image for (cam, obj) if candidate_bytes is a jpeg (raw, base64, or URL).
+    Return True if stored, False otherwise.
     """
-    global _last_image, _last_image_ts
     if not candidate_bytes:
         return False
+
+    # If the payload is a URL (http/https), fetch the image
+    try:
+        as_str = candidate_bytes.decode("utf-8") if isinstance(candidate_bytes, bytes) else str(candidate_bytes)
+    except Exception:
+        as_str = None
+    if as_str and as_str.strip().lower().startswith("http"):
+        img = fetch_jpeg_from_url(as_str.strip())
+        if img and img[:3] == b"\xff\xd8\xff":
+            with _lock:
+                _latest_images[(cam, obj)] = (img, time.time())
+            logger.info("Stored JPEG fetched from URL for %s/%s (size=%d)", cam, obj, len(img))
+            notify_sse_clients()
+            return True
+        else:
+            logger.warning("URL did not yield a valid JPEG: %s", as_str)
+            return False
 
     # If the payload already looks like JPEG bytes:
     if candidate_bytes[:3] == b"\xff\xd8\xff":
         with _lock:
-            _last_image = candidate_bytes
-            _last_image_ts = time.time()
-        logger.info("Stored raw JPEG image (size=%d)", len(candidate_bytes))
+            _latest_images[(cam, obj)] = (candidate_bytes, time.time())
+        logger.info("Stored raw JPEG image for %s/%s (size=%d)", cam, obj, len(candidate_bytes))
+        notify_sse_clients()
         return True
 
     # Try base64 decode (payload may be str or bytes)
@@ -82,9 +98,8 @@ def store_image_if_jpeg(candidate_bytes: bytes) -> bool:
         decoded = base64.b64decode(cand, validate=True)
         if decoded[:3] == b"\xff\xd8\xff":
             with _lock:
-                _last_image = decoded
-                _last_image_ts = time.time()
-            logger.info("Stored base64-decoded JPEG image (size=%d)", len(decoded))
+                _latest_images[(cam, obj)] = (decoded, time.time())
+            logger.info("Stored base64-decoded JPEG image for %s/%s (size=%d)", cam, obj, len(decoded))
             notify_sse_clients()
             return True
     except Exception:
@@ -108,20 +123,18 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     logger.debug("MQTT message on %s (len=%d)", msg.topic, len(msg.payload))
-    # Accept messages that match the configured subscription. This supports
-    # wildcards (e.g. '+' and '#') when the MQTT_TOPIC env var contains them.
-    try:
-        matches = mqtt.topic_matches_sub(MQTT_TOPIC, msg.topic)
-    except Exception:
-        # Fallback to exact match if topic matching utility isn't available for any reason
-        matches = msg.topic == MQTT_TOPIC
-
-    if matches:
-        ok = store_image_if_jpeg(msg.payload)
+    # Parse topic: frigate/<cam>/<object>/snapshot
+    parts = msg.topic.split("/")
+    if len(parts) == 4 and parts[0] == "frigate" and parts[3] == "snapshot":
+        cam = parts[1]
+        obj = parts[2]
+        ok = store_image_for_topic(msg.payload, cam, obj)
         if not ok:
             logger.warning(
                 "Received message on %s but it is not a recognizable JPEG", msg.topic
             )
+    else:
+        logger.debug("Ignoring message on topic %s (does not match frigate/<cam>/<object>/snapshot)", msg.topic)
 
 
 def start_mqtt_client():
@@ -149,56 +162,117 @@ def start_mqtt_client():
 
 @app.route("/")
 def index():
-    # Simple page that displays the latest image and uses SSE to update on new image
+    # Gallery page: show latest images grouped by camera/object
     html = """
     <!doctype html>
     <html>
       <head>
         <meta charset="utf-8"/>
-        <title>Latest MQTT Image - {{topic}}</title>
+        <title>Frigate MQTT Gallery</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 1rem; }
           .meta { margin-top: 0.5rem; color: #666; }
-          img { max-width: 100%; height: auto; border: 1px solid #ccc; }
+          .cam-group { margin-bottom: 2rem; }
+          .cam-title { font-size: 1.2em; font-weight: bold; margin-bottom: 0.5em; }
+          .object-row { display: flex; flex-wrap: wrap; gap: 1em; }
+          .object-card { border: 1px solid #ccc; padding: 0.5em; border-radius: 4px; background: #fafafa; }
+          .object-card img { max-width: 200px; max-height: 150px; display: block; }
+          .object-label { font-size: 0.95em; color: #333; margin-top: 0.2em; }
         </style>
       </head>
       <body>
-        <h1>Latest MQTT Image</h1>
-        <div>
-          <img id="lastImg" src="/image.jpg?ts={{ts}}" alt="No image yet" />
-        </div>
-        <div class="meta">
-          Topic: <code>{{topic}}</code> • Last updated: <span id="lastUpdated">{{human_ts}}</span>
+        <h1 id="page-title">Frigate MQTT Gallery</h1>
+        <button id="kiosk-btn" style="margin-bottom:1rem;">Enter Kiosk Mode</button>
+        <div id="gallery"></div>
+        <div class="meta" id="meta-bar">
+          Subscribed topic: <code>{{topic}}</code>
         </div>
         <script>
-          // Use Server-Sent Events to update image on new event
-          const evtSource = new EventSource('/events');
-          evtSource.onmessage = function(event) {
-            const img = document.getElementById('lastImg');
-            const now = Date.now();
-            img.src = '/image.jpg?ts=' + now;
-            document.getElementById('lastUpdated').innerText = new Date().toLocaleString();
-          };
+        // Kiosk mode logic
+        const kioskBtn = document.getElementById('kiosk-btn');
+        let kioskActive = false;
+        function setKioskMode(on) {
+          kioskActive = on;
+          document.body.classList.toggle('kiosk', on);
+          document.getElementById('page-title').style.display = on ? 'none' : '';
+          document.getElementById('meta-bar').style.display = on ? 'none' : '';
+          kioskBtn.textContent = on ? 'Exit Kiosk Mode' : 'Enter Kiosk Mode';
+          if (on) {
+            if (document.documentElement.requestFullscreen) {
+              document.documentElement.requestFullscreen();
+            }
+          } else {
+            if (document.fullscreenElement) {
+              document.exitFullscreen();
+            }
+          }
+        }
+        kioskBtn.onclick = function() {
+          setKioskMode(!kioskActive);
+        };
+        document.addEventListener('fullscreenchange', function() {
+          if (!document.fullscreenElement && kioskActive) {
+            setKioskMode(false);
+          }
+        });
+
+        async function fetchGallery() {
+          const resp = await fetch('/gallery');
+          const data = await resp.json();
+          const cams = {};
+          for (const entry of data.images) {
+            if (!cams[entry.cam]) cams[entry.cam] = [];
+            cams[entry.cam].push(entry);
+          }
+          let html = '';
+          for (const cam in cams) {
+            html += `<div class="cam-group"><div class="cam-title">Camera: <b>${cam}</b></div><div class="object-row">`;
+            for (const entry of cams[cam]) {
+              html += `<div class="object-card">
+                <img src="/image/${encodeURIComponent(entry.cam)}/${encodeURIComponent(entry.obj)}.jpg?ts=${entry.ts}" alt="No image" />
+                <div class="object-label">Object: <b>${entry.obj}</b><br><span style='font-size:0.85em;color:#888'>${new Date(entry.ts*1000).toLocaleString()}</span></div>
+              </div>`;
+            }
+            html += "</div></div>";
+          }
+          document.getElementById('gallery').innerHTML = html || "<i>No images yet.</i>";
+        }
+        fetchGallery();
+        const evtSource = new EventSource('/events');
+        evtSource.onmessage = function(event) {
+          fetchGallery();
+        };
         </script>
+        <style>
+        body.kiosk {
+          background: #000;
+        }
+        body.kiosk #kiosk-btn,
+        body.kiosk #page-title,
+        body.kiosk #meta-bar {
+          display: none !important;
+        }
+        body.kiosk #gallery {
+          margin-top: 0 !important;
+        }
+        </style>
       </body>
     </html>
     """
-    with _lock:
-        ts = int(_last_image_ts) if _last_image_ts else 0
-    human_ts = time.ctime(_last_image_ts) if _last_image_ts else "never"
+    return render_template_string(html, topic=MQTT_TOPIC)
     return render_template_string(
         html, topic=MQTT_TOPIC, ts=ts, human_ts=human_ts, refresh_ms=IMAGE_REFRESH_MS
     )
 
 
-@app.route("/image.jpg")
-def image():
+@app.route("/image/<cam>/<obj>.jpg")
+def image(cam, obj):
     with _lock:
-        img = _last_image
-        ts = _last_image_ts
-    if not img:
-        # Simple 204 No Content when no image yet, alternatively return a placeholder.
-        return Response(status=204)
+        key = (cam, obj)
+        entry = _latest_images.get(key)
+        if not entry:
+            return Response(status=204)
+        img, ts = entry
     return Response(
         img,
         mimetype="image/jpeg",
@@ -209,18 +283,30 @@ def image():
     )
 
 
+@app.route("/gallery")
+def gallery():
+    with _lock:
+        images = []
+        for (cam, obj), (img, ts) in _latest_images.items():
+            images.append({
+                "cam": cam,
+                "obj": obj,
+                "ts": int(ts),
+            })
+    return jsonify({"images": images, "topic": MQTT_TOPIC})
+
 @app.route("/status")
 def status():
     with _lock:
-        has = bool(_last_image)
-        ts = _last_image_ts
-        size = len(_last_image) if _last_image else 0
+        count = len(_latest_images)
+        cams = sorted(set(cam for (cam, obj) in _latest_images))
+        objects = sorted(set(obj for (cam, obj) in _latest_images))
     return jsonify(
         {
             "topic": MQTT_TOPIC,
-            "has_image": has,
-            "last_image_ts": ts,
-            "last_image_size": size,
+            "num_images": count,
+            "cameras": cams,
+            "objects": objects,
             "mqtt_broker": f"{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}",
         }
     )
