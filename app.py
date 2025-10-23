@@ -220,6 +220,12 @@ def index():
           const resp = await fetch('/gallery');
           const data = await resp.json();
           const cams = {};
+          let latestKey = null;
+          let latestTs = -1;
+          if (data.latest) {
+            latestKey = data.latest.cam + '|' + data.latest.obj;
+            latestTs = data.latest.ts;
+          }
           for (const entry of data.images) {
             if (!cams[entry.cam]) cams[entry.cam] = [];
             cams[entry.cam].push(entry);
@@ -228,7 +234,8 @@ def index():
           for (const cam in cams) {
             html += `<div class="cam-group"><div class="cam-title">Camera: <b>${cam}</b></div><div class="object-row">`;
             for (const entry of cams[cam]) {
-              html += `<div class="object-card">
+              const isLatest = latestKey && (entry.cam + '|' + entry.obj) === latestKey && entry.ts === latestTs;
+              html += `<div class="object-card${isLatest ? ' latest-image' : ''}">
                 <img src="/image/${encodeURIComponent(entry.cam)}/${encodeURIComponent(entry.obj)}.jpg?ts=${entry.ts}" alt="No image" />
                 <div class="object-label">Object: <b>${entry.obj}</b><br><span style='font-size:0.85em;color:#888'>${new Date(entry.ts*1000).toLocaleString()}</span></div>
               </div>`;
@@ -254,6 +261,10 @@ def index():
         }
         body.kiosk #gallery {
           margin-top: 0 !important;
+        }
+        .latest-image {
+          border: 4px solid red !important;
+          box-sizing: border-box;
         }
         </style>
       </body>
@@ -287,13 +298,16 @@ def image(cam, obj):
 def gallery():
     with _lock:
         images = []
+        latest = None
         for (cam, obj), (img, ts) in _latest_images.items():
             images.append({
                 "cam": cam,
                 "obj": obj,
                 "ts": int(ts),
             })
-    return jsonify({"images": images, "topic": MQTT_TOPIC})
+            if latest is None or ts > latest["ts"]:
+                latest = {"cam": cam, "obj": obj, "ts": int(ts)}
+    return jsonify({"images": images, "topic": MQTT_TOPIC, "latest": latest})
 
 @app.route("/status")
 def status():
