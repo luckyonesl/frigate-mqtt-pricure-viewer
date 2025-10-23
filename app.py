@@ -19,8 +19,10 @@ import logging
 import threading
 import time
 import base64
+import requests
+import queue
 
-from flask import Flask, Response, render_template_string, jsonify
+from flask import Flask, Response, render_template_string, jsonify, stream_with_context, request
 import paho.mqtt.client as mqtt
 
 # Configuration from env
@@ -48,6 +50,10 @@ app = Flask(__name__)
 _last_image = None  # bytes of JPEG
 _last_image_ts = 0.0  # epoch seconds
 _lock = threading.RLock()
+
+# SSE: list of queues for connected clients
+_sse_clients = []
+_sse_clients_lock = threading.Lock()
 
 
 def store_image_if_jpeg(candidate_bytes: bytes) -> bool:
@@ -79,6 +85,7 @@ def store_image_if_jpeg(candidate_bytes: bytes) -> bool:
                 _last_image = decoded
                 _last_image_ts = time.time()
             logger.info("Stored base64-decoded JPEG image (size=%d)", len(decoded))
+            notify_sse_clients()
             return True
     except Exception:
         pass
@@ -142,7 +149,7 @@ def start_mqtt_client():
 
 @app.route("/")
 def index():
-    # Simple page that displays the latest image and auto-refreshes it via JS
+    # Simple page that displays the latest image and uses SSE to update on new image
     html = """
     <!doctype html>
     <html>
@@ -164,14 +171,14 @@ def index():
           Topic: <code>{{topic}}</code> • Last updated: <span id="lastUpdated">{{human_ts}}</span>
         </div>
         <script>
-          // simple periodic reload by changing a cache-busting query string
-          const ms = {{refresh_ms}};
-          setInterval(() => {
+          // Use Server-Sent Events to update image on new event
+          const evtSource = new EventSource('/events');
+          evtSource.onmessage = function(event) {
             const img = document.getElementById('lastImg');
             const now = Date.now();
             img.src = '/image.jpg?ts=' + now;
             document.getElementById('lastUpdated').innerText = new Date().toLocaleString();
-          }, ms);
+          };
         </script>
       </body>
     </html>
@@ -217,6 +224,35 @@ def status():
             "mqtt_broker": f"{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}",
         }
     )
+
+@app.route("/events")
+def sse_events():
+    def gen():
+        q = queue.Queue()
+        with _sse_clients_lock:
+            _sse_clients.append(q)
+        try:
+            # Send an initial event so the client can update immediately
+            yield "data: update\n\n"
+            while True:
+                # Block until a new event is available
+                q.get()
+                yield "data: update\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            with _sse_clients_lock:
+                if q in _sse_clients:
+                    _sse_clients.remove(q)
+    return Response(stream_with_context(gen()), mimetype="text/event-stream")
+
+def notify_sse_clients():
+    with _sse_clients_lock:
+        for q in list(_sse_clients):
+            try:
+                q.put_nowait(True)
+            except Exception:
+                pass
 
 
 def main():
