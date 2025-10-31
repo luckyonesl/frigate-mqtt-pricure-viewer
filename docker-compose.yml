@@ -15,14 +15,19 @@ services:
       platforms:
         - linux/amd64
         #- linux/arm64
-
+    environment:
+      MQTT_BROKER_HOST: mosquitto.example.com
+      MQTT_BROKER_PORT: 8883
+      MQTT_CA_CERT: /etc/ssl/certs/ca.pem
+      MQTT_CLIENT_CERT: /etc/ssl/certs/client.crt
+      MQTT_CLIENT_KEY: /etc/ssl/client.key
     secrets:
       - source: ca-pem
         target: /etc/ssl/certs/ca.pem
       - source: client-crt
         target: /etc/ssl/certs/client.crt
       - source: client-key
-        target: /etc/ssl/private/client.key
+        target: /etc/ssl/client.key
     #env_file:
     #  - secrets/frigate-viewer.ssl
 
@@ -62,6 +67,7 @@ services:
       example.com:
 
 #mosquitto_sub -h <broker_host> -p 8883 -t <topic> --cafile /path/to/ca.crt --cert /path/to/client.crt --key /path/to/client.key -v
+# --insecure
 #openssl s_client -connect mosquitto:8883 -CAfile /etc/ssl/certs/ca.pem
 #openssl s_client -connect mosquitto.example.com:8883 -CAfile /etc/ssl/certs/ca.pem
 #openssl s_client -connect mosquitto.example.com:8883 -cert /etc/ssl/certs/client.crt -key /etc/ssl/private/client.key -CAfile /etc/ssl/certs/ca.pem
