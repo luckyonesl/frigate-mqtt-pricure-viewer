@@ -1,7 +1,7 @@
 services:
   frigate-viewer:
     #openssl s_client -key /etc/ssl/private/client.key -cert /etc/ssl/certs/client.crt  -CAfile /etc/ssl/certs/ca.pem -connect milvus.localdomain.localhost:19530
-    #image: ${DOCKERTARGETURL}frigate-viewer/frigate-viewer:$VERSION
+    image: ${DOCKERTARGETURL}frigate-viewer/frigate-viewer:$VERSION
     ports:
       - 8080:8080
       #image:  nexus.dev.god.de:5006/milvustestclient
