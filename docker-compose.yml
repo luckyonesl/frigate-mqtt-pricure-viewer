@@ -1,0 +1,104 @@
+services:
+  rag-aas:
+    #openssl s_client -key /etc/ssl/private/client.key -cert /etc/ssl/certs/client.crt  -CAfile /etc/ssl/certs/ca.pem -connect milvus.localdomain.localhost:19530
+    image: ${DOCKERTARGETURL}hychat/backend/rag-aas:$VERSION
+    ports:
+      - 7002:7002
+      #image:  nexus.dev.god.de:5006/milvustestclient
+
+    build:
+      context: rag-aas
+        #command:
+        #bash -c 'sleep 900'
+      platforms:
+        - linux/amd64
+        #- linux/arm64
+    extra_hosts:
+      - "milvus.localdomain.localhost:fdc4:f303:9324::254"
+      - "milvus.localdomain.localhost:192.168.65.254"
+      - "minioapi.localdomain.localhost:fdc4:f303:9324::254"
+      - "minioapi.localdomain.localhost:192.168.65.254"
+
+    secrets:
+      - source: ca-pem
+        target: /etc/ssl/certs/ca.pem
+      - source: client-crt
+        target: /etc/ssl/certs/client.crt
+      - source: client-key
+        target: /etc/ssl/private/client.key
+    volumes:
+          - huggingface-cache:/app/.cache
+          #- huggingface-cache:/app/.cache/huggingface/hub
+    env_file:
+      - rag-aas/app.ssl
+      - secrets/shared/s3/s3-config.env
+      - secrets/shared/vllm/vllm-config.env
+      - rag-aas/app.env
+
+  ai-composer:
+    image: ${DOCKERTARGETURL}hychat/backend/ai-composer:$VERSION
+      #command:
+      #bash -c 'sleep 9000'
+    ports:
+      - 7001:7001
+    build:
+      context: hy-ai-composer
+        #platforms:
+        #- linux/amd64
+        #- linux/arm64
+    extra_hosts:
+      - "mongodb.localdomain.localhost:fdc4:f303:9324::254"
+      - "mongodb.localdomain.localhost:192.168.65.254"
+      - "minioapi.localdomain.localhost:fdc4:f303:9324::254"
+      - "minioapi.localdomain.localhost:192.168.65.254"
+      #environment:
+      ### why do we get an error ???? - MONGO_URL="mongodb://mongodb.localdomain.localhost:27017/hychatpoc?directConnection=true&serverSelectionTimeoutMS=2000&tls=true&tlsCertificateKeyFile=/etc/ssl/private/client-crt-key.pem&tlsCAFile=/etc/ssl/certs/ca.pem&authSource=%24external&authMechanism=MONGODB-X509"
+      ### put it in envfile and it will work but do not have it twice in place
+    environment:
+      RAG_AS_A_SERVICE_HOSTNAME: rag-aas
+    env_file:
+      - hy-ai-composer/app.env
+      - hy-ai-composer/app.ssl
+      - secrets/shared/s3/s3-config.env
+      - secrets/shared/mongodb/mongodb-config.env
+      - secrets/shared/vllm/vllm-config.env
+      
+    #we need milvus and mongo
+    secrets:
+      - source: ca-pem
+        target: /etc/ssl/certs/ca.pem
+      - source: client-crt
+        target: /etc/ssl/certs/client.crt
+      - source: client-key
+        target: /etc/ssl/private/client.key
+      - source: client_crt-key
+        target: /etc/ssl/private/client-crt-key.pem
+
+  frontend:
+    image: ${DOCKERTARGETURL}hychat/frontend/hychat-frontend:$VERSION
+    ports:
+      - 7003:3000
+    build:
+      context: hychat-frontend
+        #platforms:
+        #- linux/amd64
+        #- linux/arm64
+    environment:
+      PUBLIC_API_URL: http://localhost:7001/backend
+
+secrets:
+  ca-pem:
+    file: secrets/shared/ssl/ca.pem
+  client-crt:
+    file: secrets/shared/ssl/client.crt
+  client-key:
+    file: secrets/shared/ssl/client.key
+  client_crt-key:
+    file: secrets/shared/ssl/client-crt-key.pem
+volumes:
+  huggingface-cache:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOME}/.cache/huggingface/hub
+      o: bind
