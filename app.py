@@ -22,7 +22,14 @@ import base64
 import requests
 import queue
 
-from flask import Flask, Response, render_template_string, jsonify, stream_with_context, request
+from flask import (
+    Flask,
+    Response,
+    render_template_string,
+    jsonify,
+    stream_with_context,
+    request,
+)
 import paho.mqtt.client as mqtt
 
 # Configuration from env
@@ -66,7 +73,11 @@ def store_image_for_topic(candidate_bytes: bytes, cam: str, obj: str) -> bool:
 
     # If the payload is a URL (http/https), fetch the image
     try:
-        as_str = candidate_bytes.decode("utf-8") if isinstance(candidate_bytes, bytes) else str(candidate_bytes)
+        as_str = (
+            candidate_bytes.decode("utf-8")
+            if isinstance(candidate_bytes, bytes)
+            else str(candidate_bytes)
+        )
     except Exception:
         as_str = None
     if as_str and as_str.strip().lower().startswith("http"):
@@ -74,7 +85,9 @@ def store_image_for_topic(candidate_bytes: bytes, cam: str, obj: str) -> bool:
         if img and img[:3] == b"\xff\xd8\xff":
             with _lock:
                 _latest_images[(cam, obj)] = (img, time.time())
-            logger.info("Stored JPEG fetched from URL for %s/%s (size=%d)", cam, obj, len(img))
+            logger.info(
+                "Stored JPEG fetched from URL for %s/%s (size=%d)", cam, obj, len(img)
+            )
             notify_sse_clients()
             return True
         else:
@@ -85,7 +98,9 @@ def store_image_for_topic(candidate_bytes: bytes, cam: str, obj: str) -> bool:
     if candidate_bytes[:3] == b"\xff\xd8\xff":
         with _lock:
             _latest_images[(cam, obj)] = (candidate_bytes, time.time())
-        logger.info("Stored raw JPEG image for %s/%s (size=%d)", cam, obj, len(candidate_bytes))
+        logger.info(
+            "Stored raw JPEG image for %s/%s (size=%d)", cam, obj, len(candidate_bytes)
+        )
         notify_sse_clients()
         return True
 
@@ -99,7 +114,12 @@ def store_image_for_topic(candidate_bytes: bytes, cam: str, obj: str) -> bool:
         if decoded[:3] == b"\xff\xd8\xff":
             with _lock:
                 _latest_images[(cam, obj)] = (decoded, time.time())
-            logger.info("Stored base64-decoded JPEG image for %s/%s (size=%d)", cam, obj, len(decoded))
+            logger.info(
+                "Stored base64-decoded JPEG image for %s/%s (size=%d)",
+                cam,
+                obj,
+                len(decoded),
+            )
             notify_sse_clients()
             return True
     except Exception:
@@ -134,7 +154,10 @@ def on_message(client, userdata, msg):
                 "Received message on %s but it is not a recognizable JPEG", msg.topic
             )
     else:
-        logger.debug("Ignoring message on topic %s (does not match frigate/<cam>/<object>/snapshot)", msg.topic)
+        logger.debug(
+            "Ignoring message on topic %s (does not match frigate/<cam>/<object>/snapshot)",
+            msg.topic,
+        )
 
 
 def start_mqtt_client():
@@ -176,8 +199,22 @@ def index():
           .cam-title { font-size: 1.2em; font-weight: bold; margin-bottom: 0.5em; }
           .object-row { display: flex; flex-wrap: wrap; gap: 1em; }
           .object-card { border: 1px solid #ccc; padding: 0.5em; border-radius: 4px; background: #fafafa; }
-          .object-card img { max-width: 200px; max-height: 150px; display: block; }
+          .object-card img { max-width: 200px; max-height: 150px; display: block; cursor: pointer; transition: box-shadow 0.2s; }
           .object-label { font-size: 0.95em; color: #333; margin-top: 0.2em; }
+          .fullscreen-img {
+            position: fixed !important;
+            top: 0; left: 0; right: 0; bottom: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            object-fit: contain;
+            background: #000;
+            z-index: 9999;
+            margin: 0 !important;
+            display: block;
+            box-shadow: 0 0 0 9999px rgba(0,0,0,0.8);
+          }
         </style>
       </head>
       <body>
@@ -216,6 +253,30 @@ def index():
           }
         });
 
+        // Double-click-to-fullscreen logic for gallery images
+        function setupFullscreenOnImages() {
+          document.querySelectorAll('#gallery img').forEach(img => {
+            img.ondblclick = function(e) {
+              if (img.classList.contains('fullscreen-img')) {
+                img.classList.remove('fullscreen-img');
+                document.body.style.overflow = '';
+              } else {
+                // Remove fullscreen from any other image
+                document.querySelectorAll('.fullscreen-img').forEach(el => el.classList.remove('fullscreen-img'));
+                img.classList.add('fullscreen-img');
+                document.body.style.overflow = 'hidden';
+              }
+            };
+          });
+          // Exit fullscreen on ESC key
+          document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+              document.querySelectorAll('.fullscreen-img').forEach(el => el.classList.remove('fullscreen-img'));
+              document.body.style.overflow = '';
+            }
+          });
+        }
+
         async function fetchGallery() {
           const resp = await fetch('/gallery');
           const data = await resp.json();
@@ -243,6 +304,7 @@ def index():
             html += "</div></div>";
           }
           document.getElementById('gallery').innerHTML = html || "<i>No images yet.</i>";
+          setupFullscreenOnImages();
         }
         fetchGallery();
         const evtSource = new EventSource('/events');
@@ -300,14 +362,17 @@ def gallery():
         images = []
         latest = None
         for (cam, obj), (img, ts) in _latest_images.items():
-            images.append({
-                "cam": cam,
-                "obj": obj,
-                "ts": int(ts),
-            })
+            images.append(
+                {
+                    "cam": cam,
+                    "obj": obj,
+                    "ts": int(ts),
+                }
+            )
             if latest is None or ts > latest["ts"]:
                 latest = {"cam": cam, "obj": obj, "ts": int(ts)}
     return jsonify({"images": images, "topic": MQTT_TOPIC, "latest": latest})
+
 
 @app.route("/status")
 def status():
@@ -324,6 +389,7 @@ def status():
             "mqtt_broker": f"{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}",
         }
     )
+
 
 @app.route("/events")
 def sse_events():
@@ -344,7 +410,9 @@ def sse_events():
             with _sse_clients_lock:
                 if q in _sse_clients:
                     _sse_clients.remove(q)
+
     return Response(stream_with_context(gen()), mimetype="text/event-stream")
+
 
 def notify_sse_clients():
     with _sse_clients_lock:
