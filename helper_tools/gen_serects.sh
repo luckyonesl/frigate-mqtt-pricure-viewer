@@ -29,7 +29,7 @@ fi
 if [ ! -f "${CERTDIR}/mqtt.example.com-key.pem" ];then
    echo "generating cert for server mqtt.example.com"
    ${DOCKER_COMPOSE_CMD} run \
-     -e SSL_SUBJECT=mqtt.example.com \
+     -e SSL_SUBJECT=mosquitto.example.com \
      -e SSL_DNS=mqtt.example.com \
      -e SSL_KEY=mqtt.example.com-key.pem \
      -e SSL_CERT=mqtt.example.com-cert.pem \
