@@ -1,0 +1,33 @@
+replicaCount: 1
+
+image:
+  repository: eclipse-mosquitto
+  tag: 2.0
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8883
+
+# cert-manager certificate configuration
+certManager:
+  enabled: true
+  # Name of the cert-manager Issuer or ClusterIssuer to use
+  issuerKind: ClusterIssuer
+  issuerName: subca-key-pair
+  # The common name for the server certificate
+  commonName: mosquitto.local
+  # DNS names for the certificate
+  dnsNames:
+    - mosquitto.local
+
+# Mosquitto configuration options
+mosquitto:
+  allowAnonymous: false
+  useIdentityAsUsername: true
+  persistence: false
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
