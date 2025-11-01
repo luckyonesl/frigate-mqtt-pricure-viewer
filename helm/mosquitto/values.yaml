@@ -16,10 +16,10 @@ certManager:
   issuerKind: ClusterIssuer
   issuerName: subca-issuer
   # The common name for the server certificate
-  commonName: mosquitto.local
+  commonName: mosquitto.k3s1.lan
   # DNS names for the certificate
   dnsNames:
-    - mosquitto.local
+    - mosquitto.k3s1.lan
 
 # Mosquitto configuration options
 mosquitto:
@@ -31,11 +31,3 @@ resources: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
-
-ingress:
-  enabled: false
-  host: mqtt.example.com
-  ingressClassName: ""
-  annotations: {}
-  tls:
-    secretName: ""
