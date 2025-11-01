@@ -1,3 +1,5 @@
+fullnameOverride: mosquitto
+
 replicaCount: 1
 
 image:
@@ -31,3 +33,8 @@ resources: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+traefikTCPIngress:
+  enabled: true
+  entryPoint: websecure
+  hostSNI: "mosquitto.k3s1.lan"

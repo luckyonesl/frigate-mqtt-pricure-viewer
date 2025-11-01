@@ -1,0 +1,13 @@
+services:
+  mqtt-tester:
+    environment:
+      TESTHOST: mosquitto.k3s1.lan
+      TESTPORT: "443"
+secrets:
+  ca-pem:
+    file: helm/ca.crt
+  client-crt:
+    file: helm/client.crt
+  client-key:
+    file: helm/client.key
+
