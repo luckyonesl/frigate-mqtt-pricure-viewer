@@ -1,0 +1,17 @@
+{{- if .Values.traefikTCPIngress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ include "mosquitto.fullname" . }}-tcp
+  namespace: {{ .Release.Namespace }}
+spec:
+  entryPoints:
+    - {{ .Values.traefikTCPIngress.entryPoint | quote }}
+  routes:
+    - match: HostSNI(`{{ .Values.traefikTCPIngress.hostSNI }}`)
+      services:
+        - name: {{ include "mosquitto.fullname" . }}
+          port: {{ .Values.service.port }}
+  tls:
+    passthrough: true
+{{- end }}

@@ -8,6 +8,9 @@ Environment variables:
 - MQTT_BROKER_PORT (default: 1883)
 - MQTT_USERNAME (optional)
 - MQTT_PASSWORD (optional)
+- MQTT_CLIENT_CERT (optional, path to client certificate PEM file)
+- MQTT_CLIENT_KEY (optional, path to client private key PEM file)
+- MQTT_CA_CERT (optional, path to CA certificate PEM file)
 - MQTT_TOPIC (default: frigate/hofcam1/person)
 - HTTP_HOST (default: 0.0.0.0)
 - HTTP_PORT (default: 8080)
@@ -40,6 +43,11 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", None)
 # Default to the snapshot topic which contains raw JPEG payloads.
 # Can be overridden with the MQTT_TOPIC environment variable.
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "frigate/hofcam1/person/snapshot")
+
+# MQTT TLS/Certificate-based authentication
+MQTT_CLIENT_CERT = os.getenv("MQTT_CLIENT_CERT", None)
+MQTT_CLIENT_KEY = os.getenv("MQTT_CLIENT_KEY", None)
+MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", None)
 
 HTTP_HOST = os.getenv("HTTP_HOST", "0.0.0.0")
 HTTP_PORT = int(os.getenv("HTTP_PORT", "8080"))
@@ -164,6 +172,25 @@ def start_mqtt_client():
     client = mqtt.Client()
     if MQTT_USERNAME:
         client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+
+    # TLS/Certificate-based authentication
+    if MQTT_CLIENT_CERT and MQTT_CLIENT_KEY:
+        logger.info("Configuring MQTT client for certificate-based authentication")
+        tls_kwargs = {
+            "ca_certs": MQTT_CA_CERT if MQTT_CA_CERT else None,
+            "certfile": MQTT_CLIENT_CERT,
+            "keyfile": MQTT_CLIENT_KEY,
+        }
+        # Remove None values for compatibility
+        tls_kwargs = {k: v for k, v in tls_kwargs.items() if v is not None}
+        client.tls_set(**tls_kwargs)
+        # Optionally, you can enforce certificate validation here
+        client.tls_insecure_set(False)
+    elif MQTT_CA_CERT:
+        logger.info("Configuring MQTT client for TLS server authentication only")
+        client.tls_set(ca_certs=MQTT_CA_CERT)
+        client.tls_insecure_set(False)
+
     client.on_connect = on_connect
     client.on_message = on_message
 

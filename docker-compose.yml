@@ -1,0 +1,101 @@
+services:
+  frigate-viewer:
+    #openssl s_client -key /etc/ssl/private/client.key -cert /etc/ssl/certs/client.crt  -CAfile /etc/ssl/certs/ca.pem -connect milvus.localdomain.localhost:19530
+    image: ${DOCKERTARGETURL}frigate-viewer/frigate-viewer:$VERSION
+    ports:
+      - 8080:8080
+      #image:  nexus.dev.god.de:5006/milvustestclient
+    networks:
+      example.com:
+    build:
+      context:
+        frigate-viewer
+        #command:
+        #bash -c 'sleep 900'
+      platforms:
+        - linux/amd64
+        #- linux/arm64
+    environment:
+      MQTT_BROKER_HOST: mosquitto.example.com
+      MQTT_BROKER_PORT: 8883
+      MQTT_CA_CERT: /etc/ssl/certs/ca.pem
+      MQTT_CLIENT_CERT: /etc/ssl/certs/client.crt
+      MQTT_CLIENT_KEY: /etc/ssl/client.key
+    secrets:
+      - source: ca-pem
+        target: /etc/ssl/certs/ca.pem
+      - source: client-crt
+        target: /etc/ssl/certs/client.crt
+      - source: client-key
+        target: /etc/ssl/client.key
+    #env_file:
+    #  - secrets/frigate-viewer.ssl
+
+  mosquitto:
+    hostname: mosquitto.example.com
+    image: eclipse-mosquitto:openssl
+    ports:
+      - 1883:1883
+      - 8883:8883
+    secrets:
+      - source: mqtt-key
+        target: /mosquitto/certs/mqtt.example.com-key.pem
+      - source: mqtt-cert
+        target: /mosquitto/certs/mqtt.example.com-cert.pem
+      - source: ca-pem
+        target: /mosquitto/certs/ca.pem
+    volumes:
+      - mosquitto-config:/mosquitto/config
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-logs:/mosquitto/log
+    networks:
+      example.com:
+  mqtt-tester:
+    hostname: mqtt-tester.example.com
+    environment:
+      TESTHOST: mosquitto.example.com
+    build:
+      context: mqtt-test-client
+    secrets:
+      - source: ca-pem
+        target: /etc/ssl/certs/ca.pem
+      - source: client-crt
+        target: /etc/ssl/certs/client.crt
+      - source: client-key
+        target: /etc/ssl/private/client.key
+    networks:
+      example.com:
+
+#mosquitto_sub -h <broker_host> -p 8883 -t <topic> --cafile /path/to/ca.crt --cert /path/to/client.crt --key /path/to/client.key -v
+# --insecure
+#openssl s_client -connect mosquitto:8883 -CAfile /etc/ssl/certs/ca.pem
+#openssl s_client -connect mosquitto.example.com:8883 -CAfile /etc/ssl/certs/ca.pem
+#openssl s_client -connect mosquitto.example.com:8883 -cert /etc/ssl/certs/client.crt -key /etc/ssl/private/client.key -CAfile /etc/ssl/certs/ca.pem
+secrets:
+  ca-pem:
+    file: secrets/certs/ca.pem
+  client-crt:
+    file: secrets/certs/admin-cert.pem
+  client-key:
+    file: secrets/certs/admin-key.pem
+  mqtt-key:
+    file: secrets/certs/mqtt.example.com-key.pem
+  mqtt-cert:
+    file: secrets/certs/mqtt.example.com-cert.pem
+
+volumes:
+  mosquitto-data:
+  mosquitto-logs:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./logs
+      o: bind
+  mosquitto-config:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./mosquitto
+      o: bind
+networks:
+  example.com:

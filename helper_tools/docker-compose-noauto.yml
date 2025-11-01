@@ -1,0 +1,10 @@
+---
+services:
+  # A handy container to generate certificates
+  ssl-ca:
+    image: ${PRIVATE_MIRROR}paulczar/omgwtfssl:latest
+    # Fix folder permission on Bamboo host
+    userns_mode: "host"
+    restart: no
+    volumes:
+      - ${CERTDIR}:/certs

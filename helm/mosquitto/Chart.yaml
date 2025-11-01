@@ -1,0 +1,17 @@
+apiVersion: v2
+name: mosquitto
+description: Mosquitto MQTT broker with mutual SSL and cert-manager support
+type: application
+version: 0.1.0
+appVersion: "2.0"
+keywords:
+  - mqtt
+  - mosquitto
+  - ssl
+  - tls
+  - cert-manager
+  - kubernetes
+home: https://mosquitto.org/
+maintainers:
+  - name: Your Name
+    email: your.email@example.com
