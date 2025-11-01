@@ -14,7 +14,7 @@ certManager:
   enabled: true
   # Name of the cert-manager Issuer or ClusterIssuer to use
   issuerKind: ClusterIssuer
-  issuerName: subca-key-pair
+  issuerName: subca-issuer
   # The common name for the server certificate
   commonName: mosquitto.local
   # DNS names for the certificate

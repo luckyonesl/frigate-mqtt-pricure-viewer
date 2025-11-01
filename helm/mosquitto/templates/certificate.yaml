@@ -13,7 +13,7 @@ spec:
   dnsNames:
 {{- range .Values.certManager.dnsNames }}
     - {{ . }}
-{{- end }}
+    {{- end }}
   issuerRef:
     name: {{ .Values.certManager.issuerName }}
     kind: {{ .Values.certManager.issuerKind }}
